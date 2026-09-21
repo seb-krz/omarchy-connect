@@ -58,6 +58,13 @@ var devBad = M.normalizeDevice("x", null, null, null)
 assert.strictEqual(devBad.name, "Unknown device")
 assert.strictEqual(devBad.connected, false)
 
+// ---- remote filesystem (sftp) capability ----
+
+// Capability requires the plugin to be loaded, not merely supported.
+var devSftp = M.normalizeDevice("id4", reachableProps, ["kdeconnect_sftp"], null)
+assert.strictEqual(devSftp.caps.sftp, true)
+assert.strictEqual(devSftp.caps.ring, false)
+
 // ---- ordering ----
 
 function mini(id, name, connected, paired, reachable) {

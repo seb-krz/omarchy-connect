@@ -34,6 +34,11 @@ Panel {
     function openReceivedFolder() {
       if (root.primary && root.svc) root.svc.openReceivedFolder(root.primary.id)
     }
+    // Open the primary device's storage in the file manager; scriptable for
+    // testing. The device id is resolved here, never taken off the wire.
+    function browseFiles() {
+      if (root.primary && root.svc) root.svc.openFiles(root.primary.id)
+    }
     function setNotifyOnReceive(on: bool) {
       root.setNotifyOnReceive(on)
     }
@@ -60,6 +65,7 @@ Panel {
     if (!root.svc) return
     root.svc.preferredDeviceId = root.setting("preferredDevice", "")
     root.svc.notifyEnabled = root.notifyOnReceive
+    root.svc.urlHandlerEnabled = root.installUrlHandler
   }
   onSvcChanged: root.syncServiceSettings()
   onSettingsChanged: root.syncServiceSettings()
@@ -206,7 +212,8 @@ Panel {
     { key: "ring", cap: "ring", icon: "\u{f009e}", label: "Ring" },
     { key: "ping", cap: "ping", icon: "\u{f0361}", label: "Ping" },
     { key: "clipboard", cap: "clipboard", icon: "\u{f014d}", label: "Clipboard" },
-    { key: "sharetext", cap: "share", icon: "\u{f048a}", label: "Text" }
+    { key: "sharetext", cap: "share", icon: "\u{f048a}", label: "Text", settingsLabel: "Share text" },
+    { key: "files", cap: "sftp", icon: "\u{f024b}", label: "Files", settingsLabel: "Browse phone files" }
   ]
   readonly property var hiddenActions: setting("hiddenActions", []) || []
 
@@ -234,6 +241,17 @@ Panel {
     if (root.bar && root.bar.shell) root.bar.shell.updateEntryInline(root.moduleName, root.settings)
   }
 
+  // ---- kdeconnect:// handler (opt-in, default off) ----
+  // The install writes outside the plugin folder (~/.local/bin, a .desktop and
+  // a mimeapps default), so it runs only when the user switches this on.
+  // Switching it off uninstalls again; the Files action never needs it.
+  readonly property bool installUrlHandler: setting("installUrlHandler", false) === true
+
+  function setInstallUrlHandler(on) {
+    root.settings = Object.assign({}, root.settings, { installUrlHandler: !!on })
+    if (root.bar && root.bar.shell) root.bar.shell.updateEntryInline(root.moduleName, root.settings)
+  }
+
   function runAction(key) {
     if (!primary) return
     if (key === "sharetext") {
@@ -244,6 +262,7 @@ Panel {
     if (key === "ring") svc.ring(primary.id)
     else if (key === "ping") svc.ping(primary.id)
     else if (key === "clipboard") svc.sendClipboard(primary.id)
+    else if (key === "files") svc.openFiles(primary.id)
   }
 
   function sendShareText() {
@@ -321,6 +340,7 @@ Panel {
       if (a.kind === "sharetext") return "Sending text…"
       return "Sending clipboard…"
     }
+    if (a.kind === "files-no-sshfs") return "Install sshfs to browse files"
     if (a.status === "failed") return "Action failed"
     if (a.kind === "clipboard") return "Clipboard sent"
     if (a.kind === "sharetext") return "Text sent"
@@ -950,7 +970,7 @@ Panel {
             Toggle {
               required property var modelData
               width: parent.width
-              label: modelData.label === "Text" ? "Share text" : modelData.label
+              label: modelData.settingsLabel || modelData.label
               checked: root.hiddenActions.indexOf(modelData.key) === -1
               foreground: root.fg
               fontFamily: root.ff
@@ -976,6 +996,16 @@ Panel {
             foreground: root.fg
             fontFamily: root.ff
             onClicked: root.setSuppressPairingPopup(!root.suppressPairingPopup)
+          }
+
+          Toggle {
+            width: parent.width
+            label: "kdeconnect:// link handler"
+            description: "Let KDE Connect's Explore button open your file manager"
+            checked: root.installUrlHandler
+            foreground: root.fg
+            fontFamily: root.ff
+            onClicked: root.setInstallUrlHandler(!root.installUrlHandler)
           }
 
           PanelSectionHeader {

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=KDE Connect device browser
+Comment=Open a paired KDE Connect device's storage in the file manager
+Exec=@HANDLER@ %u
+Icon=phone
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+MimeType=x-scheme-handler/kdeconnect;

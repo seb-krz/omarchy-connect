@@ -11,6 +11,14 @@ Item {
 
   // ---- public state ----
   property bool cliInstalled: false
+  // KDE Connect's remote-filesystem plugin needs the sshfs binary; the
+  // kdeconnect package ships it only as an optional dependency.
+  property bool sshfsInstalled: false
+  // Opt-in setting (pushed by the panel): install or remove the
+  // kdeconnect:// desktop integration. Off by default, so nothing outside the
+  // plugin folder is written until the user asks for it. The Files action
+  // below uses the bundled handler directly and does not need this.
+  property bool urlHandlerEnabled: false
   property string backendState: Model.BackendState.Unknown
   property bool refreshing: false
   property var devices: []
@@ -156,6 +164,22 @@ Item {
   // text is user input passed as a single argv element — never a shell string.
   function shareText(id, text) { _cliAction("sharetext", id, ["kdeconnect-cli", "--share-text", text, "--device", id]) }
 
+  // Open the device's storage in the file manager. This calls the same
+  // bundled handler that is registered for the kdeconnect:// scheme, so the
+  // panel action and KDE Connect's own "Explore device" button stay in
+  // lockstep. The handler resolves the device id over D-Bus — no IP here.
+  //
+  // sshfs is only an optional dependency and can be installed after the shell
+  // has started, so the startup probe is not trusted here: re-check it live on
+  // click before deciding whether to open or to ask for it.
+  property string _pendingFilesId: ""
+
+  function openFiles(id) {
+    if (!id) return
+    _pendingFilesId = id
+    sshfsProbe.running = true
+  }
+
   function rediscover() {
     dbus.call(_daemonCall("forceOnNetworkChange"), function () { refresh() })
   }
@@ -236,6 +260,31 @@ Item {
     onExited: function (exitCode) {
       root.cliInstalled = exitCode === 0
       root.refresh()
+    }
+  }
+
+  Process {
+    id: whichSshfs
+    command: ["which", "sshfs"]
+    onExited: function (exitCode) { root.sshfsInstalled = exitCode === 0 }
+  }
+
+  // On-click sshfs check, separate from the startup probe so a click can never
+  // race it. If sshfs appeared since startup, the action opens; otherwise the
+  // panel reports the missing optional dependency rather than failing silently.
+  Process {
+    id: sshfsProbe
+    command: ["which", "sshfs"]
+    onExited: function (exitCode) {
+      root.sshfsInstalled = exitCode === 0
+      var id = root._pendingFilesId
+      root._pendingFilesId = ""
+      if (exitCode !== 0) {
+        root.action = { kind: "files-no-sshfs", deviceId: id, status: "failed" }
+        actionClear.restart()
+        return
+      }
+      if (id) Quickshell.execDetached([integration.handlerPath, "kdeconnect://" + id + "/"])
     }
   }
 
@@ -340,10 +389,20 @@ Item {
     onTriggered: thumbProc.running = false
   }
 
+  Integration { id: integration }
+
+  // Only an actual setting change — or the first sync after a shell start with
+  // the setting already on — installs/uninstalls the integration.
+  onUrlHandlerEnabledChanged: {
+    if (urlHandlerEnabled) integration.install()
+    else integration.uninstall()
+  }
+
   Dbus { id: dbus }
 
   Component.onCompleted: {
     whichCli.running = true
+    whichSshfs.running = true
     dbus.startMonitor()
   }
 }

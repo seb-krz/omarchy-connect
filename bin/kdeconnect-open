@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Open the storage of a paired KDE Connect device in the file manager.
+#
+# This is registered as the handler for the kdeconnect:// URL scheme so the
+# KDE Connect application's own "Explore device" button works on desktops
+# without KIO (Omarchy's default file manager is one), and it is usable
+# directly:
+#
+#   kdeconnect-open kdeconnect://<device-id>/            # the phone's storage
+#   kdeconnect-open kdeconnect://<device-id>/Download    # a sub-path
+#   kdeconnect-open <device-id>                          # same as the root
+#
+# The device id is stable; an IP address is never used here. The KDE Connect
+# daemon owns discovery and the sshfs mount, both keyed by that id. The sshfs
+# mount's "/" is a virtual root the daemon maps onto the device's single
+# advertised storage directory, which is exactly what getDirectories returns.
+#
+# The scheme registration itself is opt-in (the "kdeconnect:// link handler"
+# setting) and lives in bin/kdeconnect-install. This script never registers
+# anything; it only opens.
+#
+# Dependencies are ones the plugin already has: systemd's busctl and glib's
+# gio. No Python, no KIO, no Dolphin.
+set -euo pipefail
+
+usage() {
+  echo "usage: ${0##*/} (kdeconnect://<device-id>[/path] | <device-id>)" >&2
+}
+
+# Desktop feedback for the paths that have no panel to show a status: KDE
+# Connect's own "Explore device" button and a terminal invocation.
+notify() {
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    omarchy-notification-send --app-name omarchy-connect -u normal -t 10000 "$1" "$2" >/dev/null 2>&1 || true
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send --app-name=omarchy-connect --urgency=normal "$1" "$2" >/dev/null 2>&1 || true
+  fi
+}
+
+fail() {
+  notify "Remote files" "$1"
+  echo "kdeconnect-open: $1" >&2
+  exit 1
+}
+
+# Percent-decode a URL path segment. Backslashes are doubled first so that
+# printf's %b does not interpret a literal backslash in the input; the only
+# escape sequences %b ever sees are the \xNN sequences fed in below.
+urldecode() {
+  local s="${1//\\/\\\\}"
+  s="$(printf '%s' "$s" | sed 's/%\([0-9a-fA-F][0-9a-fA-F]\)/\\x\1/g')"
+  printf '%b' "$s"
+}
+
+url="${1:-}"
+if [ -z "$url" ]; then
+  usage
+  exit 2
+fi
+
+# Accept kdeconnect://<id>/<path>, kdeconnect://<id>, or a bare <id>.
+if [[ "$url" == kdeconnect://* ]]; then
+  rest="${url#kdeconnect://}"
+  device_id="${rest%%/*}"
+  if [[ "$rest" == */* ]]; then subpath="/${rest#*/}"; else subpath=""; fi
+else
+  device_id="$url"
+  subpath=""
+fi
+
+# A device id is always required. The plugin is multi-device, so with no id we
+# must not guess at "the first" device: print usage and stop.
+if [ -z "$device_id" ]; then
+  usage
+  exit 2
+fi
+
+# The sub-path is a user-controlled URL segment. Percent-decode it first, then
+# reject traversal: decoding before validating is deliberate, so that a
+# smuggled %2e%2e cannot become ".." after the check has run.
+relative=""
+if [ -n "$subpath" ] && [ "$subpath" != "/" ]; then
+  if [[ "$subpath" =~ %00 ]]; then
+    fail "a null byte is not allowed in a device path"
+  fi
+  subpath="$(urldecode "$subpath")"
+  relative="${subpath#/}"
+  # Wrapping in slashes makes ".." a full path segment: the pattern can only
+  # match a bare ".." component, never a name that merely contains dots.
+  case "/$relative/" in
+    */../*) fail "\"..\" is not allowed in a device path" ;;
+  esac
+fi
+
+if ! command -v busctl >/dev/null 2>&1; then
+  fail "busctl (systemd) is required to reach the KDE Connect daemon"
+fi
+
+# KDE Connect's sftp plugin shells out to sshfs to mount the device, and the
+# kdeconnect package lists sshfs only as an *optional* dependency, so it is
+# commonly missing. Say so instead of failing with the daemon's opaque text.
+command -v sshfs >/dev/null 2>&1 \
+  || fail "Remote files need sshfs. Install it with:  omarchy-pkg-add sshfs"
+
+sftp_iface="org.kde.kdeconnect.device.sftp"
+sftp_path="/modules/kdeconnect/devices/$device_id/sftp"
+
+# call <method> [timeout-seconds] -> raw --json=short output on stdout
+#
+# `|| true` matters: with `set -e` + `pipefail` a failing busctl (unknown
+# device id, daemon gone) would otherwise kill the script here, before the
+# mounted != true branch below can report anything to the user.
+call() {
+  busctl --user --timeout="${2:-5}" call org.kde.kdeconnect "$sftp_path" \
+    "$sftp_iface" "$1" --json=short 2>/dev/null || true
+}
+
+# mountPoint -> s  : {"type":"s","data":["/run/user/1000/<id>"]}
+# The point is keyed by the device id and is reported whether or not the device
+# is mounted, so it is known before the mount attempt below.
+#
+# A connection that dropped after a successful mount leaves its fuse.sshfs
+# mount registered in the kernel even though the sshfs process is gone: the
+# endpoint then answers "Transport endpoint is not connected" and the daemon's
+# next mount dies with the opaque "sshfs finished with exit code 1", which is
+# indistinguishable from a real failure. When the daemon says the device is not
+# mounted yet the mount table still lists this device's own sshfs point, that
+# entry is a leftover: reap it first, so the failure self-heals instead of
+# reaching the user as a failed action.
+#
+# mounts_file and the fusermount lookup are overridable so tests can drive this
+# without touching the real mount table (see tests/open-handler.test.sh).
+mounts_file="${OMARCHY_CONNECT_MOUNTS:-/proc/mounts}"
+
+# Unmount a dead sshfs point of *this* device only, identified by the
+# "<mount-point> fuse.sshfs " pair in the mount table; anything else on that
+# path (or another device's mount) is left untouched.
+unmount_stale_sshfs() {
+  local point="$1" tool
+  grep -qsF "$point fuse.sshfs " "$mounts_file" || return 0
+  for tool in fusermount3 fusermount; do
+    command -v "$tool" >/dev/null 2>&1 || continue
+    # -z (lazy) first: a dead endpoint that still has a stalled reference on it
+    # refuses a regular unmount, but detaching it eagerly is safe here.
+    "$tool" -uz "$point" >/dev/null 2>&1 && return 0
+    "$tool" -u "$point" >/dev/null 2>&1 && return 0
+  done
+  return 0
+}
+
+mount_point="$(call mountPoint | sed -n 's/.*"data":\["\([^"]*\)"\].*/\1/p')"
+is_mounted="$(call isMounted | sed -n 's/.*"data":\[\([a-z]*\)\].*/\1/p')"
+if [ -n "$mount_point" ] && [ "$is_mounted" != "true" ]; then
+  unmount_stale_sshfs "$mount_point"
+fi
+
+# The daemon starts sshfs on demand. A device that is offline or has the
+# Remote-filesystem plugin disabled reports false here; surface its own error.
+mounted="$(call mountAndWait 20 | sed -n 's/.*"data":\[\([a-z]*\)\].*/\1/p')"
+if [ "$mounted" != "true" ]; then
+  reason="$(call getMountError | sed -n 's/.*"data":\["\([^"]*\)"\].*/\1/p')"
+  fail "${reason:-Could not reach device $device_id — is KDE Connect running?}"
+fi
+
+# mount_point is already known from above.
+# getDirectories -> a{sv} : {"...data":[{"/run/.../storage/emulated/0":{...}}]}
+storage="$(call getDirectories | sed -n 's/.*"data":\[{"\([^"]*\)":.*/\1/p')"
+[ -n "$storage" ] || storage="$mount_point"
+
+target="$storage"
+if [ -n "$relative" ]; then
+  # Paths are relative to the storage the virtual root shows; anything else
+  # falls back to the raw sshfs mount (mirrors KDE's own KIO worker).
+  #
+  # The probe touches the sshfs mount, and a connection that drops right after
+  # mountAndWait leaves an endpoint that blocks instead of failing. Bound it,
+  # so a dead mount falls through to the fallback rather than hanging here.
+  if timeout 5 test -d "$storage/$relative"; then
+    target="$storage/$relative"
+  elif [ -n "$mount_point" ]; then
+    target="$mount_point/$relative"
+  else
+    target="$storage/$relative"
+  fi
+fi
+
+if command -v gio >/dev/null 2>&1; then
+  exec gio open "$target"
+fi
+exec xdg-open "$target"

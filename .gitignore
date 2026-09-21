@@ -2,3 +2,4 @@ CLAUDE.local.md
 .claude/settings.local.json
 .claude/qmllint-imports/
 DesignDocument.md
+.pi/

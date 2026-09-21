@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "seb-krz.omarchy-connect",
   "name": "Omarchy Connect",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "seb-krz",
   "license": "MIT",
-  "description": "Native KDE Connect integration: device status, battery, pairing and actions",
+  "description": "Native KDE Connect integration: device status, battery, pairing, actions and remote file browsing",
   "kinds": [
     "service",
     "bar-widget"
@@ -16,7 +16,7 @@
   },
   "barWidget": {
     "displayName": "Omarchy Connect",
-    "description": "Native KDE Connect integration: device status, battery, pairing and actions",
+    "description": "Native KDE Connect integration: device status, battery, pairing, actions and remote file browsing",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "center"

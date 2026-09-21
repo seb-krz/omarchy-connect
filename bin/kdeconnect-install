@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# Install or remove Omarchy Connect's desktop integration.
+#
+# The integration is a kdeconnect:// URL handler so the KDE Connect
+# application's own "Explore device" button opens the phone's storage in the
+# user's file manager on desktops without KIO. It consists of:
+#
+#   ~/.local/bin/kdeconnect-open                       (this repo's bin/)
+#   ~/.local/share/applications/kdeconnect-url-handler.desktop
+#   a registered x-scheme-handler/kdeconnect default
+#
+# The integration is opt-in: the panel's "kdeconnect:// link handler" setting
+# (default off) runs `kdeconnect-install install` when switched on and
+# `kdeconnect-install uninstall` when switched off. The service never runs it
+# on its own. It can equally be run by hand; `install` is idempotent.
+#
+# `install` claims the scheme default only when no other handler owns it. A
+# default the user (or another application) already set is left untouched.
+# `uninstall` removes only our own association; foreign lines survive.
+#
+# Usage: kdeconnect-install [install|uninstall|status]
+set -euo pipefail
+
+script="$0"
+if command -v realpath >/dev/null 2>&1; then
+  script="$(realpath "$0")"
+fi
+self_dir="$(cd -- "$(dirname -- "$script")" && pwd)"
+
+handler_src="$self_dir/kdeconnect-open"
+template="$self_dir/../resources/kdeconnect-url-handler.desktop"
+
+bin_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+apps_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+
+handler_dst="$bin_dir/kdeconnect-open"
+desktop_name="kdeconnect-url-handler.desktop"
+desktop_dst="$apps_dir/$desktop_name"
+mimeapps="${XDG_CONFIG_HOME:-$HOME/.config}/mimeapps.list"
+
+refresh_databases() {
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
+  fi
+}
+
+# The effective default for the scheme, across every mimeapps.list xdg-mime
+# consults. Empty when the scheme has no default at all.
+current_scheme_default() {
+  if command -v xdg-mime >/dev/null 2>&1; then
+    xdg-mime query default x-scheme-handler/kdeconnect 2>/dev/null || true
+  fi
+}
+
+# Delete only our own association from one mimeapps.list, in place. A line
+# that names any other handler is preserved byte-for-byte.
+remove_own_scheme_line() {
+  local file="$1" tmp="$1.omarchy-connect.tmp"
+  [ -f "$file" ] || return 0
+  if awk -v name="$desktop_name" '
+    /^x-scheme-handler\/kdeconnect=/ {
+      value = $0
+      sub(/^[^=]*=/, "", value)
+      gsub(/;/, "", value)
+      if (value == name) next
+    }
+    { print }
+  ' "$file" > "$tmp"; then
+    # Write through rather than mv over: a mimeapps.list that is a symlink
+    # (dotfile managers) must stay one.
+    cat "$tmp" > "$file"
+  fi
+  rm -f "$tmp"
+}
+
+install_integration() {
+  [ -f "$handler_src" ] || { echo "${0##*/}: handler not found: $handler_src" >&2; exit 1; }
+  [ -f "$template" ] || { echo "${0##*/}: template not found: $template" >&2; exit 1; }
+
+  mkdir -p "$bin_dir" "$apps_dir"
+  install -m 0755 "$handler_src" "$handler_dst"
+  sed "s|@HANDLER@|$handler_dst|g" "$template" > "$desktop_dst"
+  chmod 0644 "$desktop_dst"
+  refresh_databases
+
+  if command -v xdg-mime >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$mimeapps")"
+    local existing
+    existing="$(current_scheme_default)"
+    if [ -z "$existing" ] || [ "$existing" = "$desktop_name" ]; then
+      xdg-mime default "$desktop_name" x-scheme-handler/kdeconnect
+    else
+      echo "${0##*/}: x-scheme-handler/kdeconnect already has a default ($existing); leaving it unchanged" >&2
+    fi
+  fi
+
+  echo "${0##*/}: installed $handler_dst and $desktop_dst"
+}
+
+uninstall_integration() {
+  rm -f "$desktop_dst" "$handler_dst"
+  refresh_databases
+
+  # Drop only our own default; another handler's line survives untouched.
+  # xdg-mime writes the config-dir file, but check the data-dir one too.
+  remove_own_scheme_line "$mimeapps"
+  remove_own_scheme_line "$apps_dir/mimeapps.list"
+
+  echo "${0##*/}: removed $handler_dst and $desktop_dst"
+}
+
+status_integration() {
+  local state="not installed"
+  if [ -x "$handler_dst" ] && [ -f "$desktop_dst" ]; then state="installed"; fi
+  echo "${0##*/}: $state"
+  echo "  handler: $handler_dst"
+  echo "  desktop: $desktop_dst"
+  echo "  default: $(current_scheme_default)"
+}
+
+case "${1:-install}" in
+  install) install_integration ;;
+  uninstall) uninstall_integration ;;
+  status) status_integration ;;
+  -h | --help | help) echo "usage: ${0##*/} [install|uninstall|status]" ;;
+  *)
+    echo "${0##*/}: unknown command: $1" >&2
+    echo "usage: ${0##*/} [install|uninstall|status]" >&2
+    exit 2
+    ;;
+esac

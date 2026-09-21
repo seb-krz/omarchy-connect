@@ -52,6 +52,7 @@ var CAPABILITY_PLUGINS = {
   ping: "kdeconnect_ping",
   clipboard: "kdeconnect_clipboard",
   share: "kdeconnect_share",
+  sftp: "kdeconnect_sftp",
   remoteCommands: "kdeconnect_remotecommands"
 }
 
