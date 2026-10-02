@@ -172,6 +172,13 @@ function baseName(path) {
   return i === -1 ? p : p.substring(i + 1)
 }
 
+// Escape a remote-chosen string for a sink that parses markup (the shell
+// renders notification bodies as StyledText). The shell already drops <img>
+// tags itself; this keeps a hostile file name from styling the body at all.
+function escapeMarkup(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
 function makeMonitorFilter() {
   return {
     inSignal: false,
@@ -399,6 +406,7 @@ if (typeof module !== "undefined") {
     makeMonitorFilter: makeMonitorFilter,
     parseShareUrl: parseShareUrl,
     baseName: baseName,
+    escapeMarkup: escapeMarkup,
     BackendState: BackendState,
     snapshotSummary: snapshotSummary,
     deviceGlyph: deviceGlyph,

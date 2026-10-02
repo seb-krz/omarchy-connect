@@ -549,6 +549,8 @@ Panel {
           }
 
           Text {
+            // Device name is remote-controlled: never let AutoText promote it to rich text.
+            textFormat: Text.PlainText
             width: parent.width
             text: root.incomingRequest ? root.incomingRequest.name + " wants to pair." : ""
             color: root.fg
@@ -732,6 +734,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
+              textFormat: Text.PlainText
               text: root.primary ? root.primary.name : ""
               color: root.fg
               font.family: root.ff
@@ -906,6 +909,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           visible: root.actionStatusText !== ""
           width: parent.width
           text: root.actionStatusText
@@ -1080,7 +1084,8 @@ Panel {
       }
 
       Text {
-        // Untrusted display string: rendered as plain elided text only.
+        // Untrusted display string: PlainText stops AutoText parsing markup in a device name.
+        textFormat: Text.PlainText
         text: row.dev.name
         color: root.fg
         opacity: row.dev.connected ? 1.0 : 0.7

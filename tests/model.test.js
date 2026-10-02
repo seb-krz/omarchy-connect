@@ -170,6 +170,8 @@ assert.strictEqual(f9.takeShare(), null)
 
 assert.strictEqual(M.baseName("/home/riclib/Downloads/IMG_2557.heic"), "IMG_2557.heic")
 assert.strictEqual(M.baseName("bare.png"), "bare.png")
+assert.strictEqual(M.escapeMarkup('<img src="http://h/x.png">&.jpg'), "&lt;img src=\"http://h/x.png\"&gt;&amp;.jpg")
+assert.strictEqual(M.escapeMarkup("IMG_2557.heic"), "IMG_2557.heic")
 
 console.log("all model tests passed")
 

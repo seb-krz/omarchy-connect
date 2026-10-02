@@ -333,7 +333,7 @@ Item {
     var argv = ["omarchy-notification-send", "--app-name", "omarchy-connect",
       "-g", "\u{f01da}", "-u", "normal", "-t", "10000"]
     if (image) argv = argv.concat(["--image", image])
-    argv = argv.concat(["File received", name])
+    argv = argv.concat(["File received", Model.escapeMarkup(name)])
     // --exec must come last and be given as separate words: the script takes
     // everything after it as the click argv, and the shell runs that argv
     // directly (Util.execArgv, no shell), so the slot integer is one element.
