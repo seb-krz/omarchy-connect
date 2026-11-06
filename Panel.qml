@@ -183,11 +183,11 @@ Panel {
   readonly property bool wideBar: showPercentage && batteryShown && !button.vertical
   readonly property real openPanelIndicatorWidth: wideBar ? button.glyphPaintedWidth : 0
 
-  readonly property string barText: {
-    var glyph = primary ? Model.deviceGlyph(primary.type) : Model.deviceGlyph("")
-    if (!wideBar) return glyph
-    return glyph + " " + primary.battery.percentage + "%" + (primary.battery.charging ? "\u{f140b}" : "")
-  }
+  // The glyph alone goes in BarIconButton.text (it is fitted to the icon box);
+  // the percentage goes in labelText, or both shrink together.
+  readonly property string barText: primary ? Model.deviceGlyph(primary.type) : Model.deviceGlyph("")
+  readonly property string barLabel: wideBar
+    ? primary.battery.percentage + "%" + (primary.battery.charging ? "\u{f140b}" : "") : ""
 
   readonly property string barTooltip: {
     if (!backendReady) return "KDE Connect unavailable"
@@ -464,6 +464,7 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: root.barText
+    labelText: root.barLabel
     slotSize: Style.bar.iconSlot * (root.wideBar ? 2 : 1)
     active: root.incomingRequest !== null
     dimmed: !root.primaryConnected && root.incomingRequest === null
